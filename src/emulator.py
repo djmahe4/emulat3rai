@@ -170,19 +170,15 @@ def do_call_manually(emu: Any, op: Any) -> bool:
 # Rich-printer observer (used by step_emulator)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Rich-printer observer (used by step_emulator)
+# ---------------------------------------------------------------------------
+
 class _RichPrinterObserver(BaseObserver):
     """Internal observer that reproduces the original rich-based output."""
 
     def __init__(self, stack_context: int = STACK_CTX) -> None:
         self.stack_context  = stack_context
-        self._prev_wlog_len = 0
-        self._baseline      = 0
-
-    def on_session_start(self, *, event: str, va: int, config: Any, **kw):
-        rprint(f"\n[[green]*[/green]] Initial state:")
-        # We don't have emu here directly in the event, but we can't easily get it
-        # unless we pass it. EmulatorSession.step emits emu.
-        pass
 
     def on_instruction(self, *, event: str, step: int, va: int, insn: str, emu: Any, **kw):
         rprint(f"\nStep [yellow]{step:>4d}[/yellow] | "
@@ -218,14 +214,9 @@ class _RichPrinterObserver(BaseObserver):
         rprint(f"  >> following call to 0x{target:x}")
         rprint(format_registers(emu))
 
-    def on_session_end(self, *, event: str, steps: int, va: int, config: Any, **kw):
-        # This summary needs the emulator object which isn't in session_end by default
-        # but we can get it from the session if we were attached.
-        pass
-
-    def final_summary(self, step: int, emu: Any, baseline: int) -> None:
+    def final_summary(self, steps: int, emu: Any, baseline: int) -> None:
         rprint(f"\n{'=' * 78}")
-        rprint(f"\n[[green]*[/green]] Final state after [green]{step}[/green] steps:")
+        rprint(f"\n[[green]*[/green]] Final state after [green]{steps}[/green] steps:")
         rprint(format_registers(emu))
 
         sp = emu.getStackCounter()
@@ -275,7 +266,7 @@ def step_emulator(
     from .session import EmulatorSession
     from .hooks import build_default_registry
 
-    # Build a compatible config
+    # Build a compatible config if not provided
     if cfg is None:
         cfg = EmulatorConfig(
             max_instructions=max_instructions,
@@ -287,12 +278,7 @@ def step_emulator(
 
     printer = _RichPrinterObserver(stack_context=stack_context)
 
-    # Fallback for minimal setups without workspace
-    if vw is None:
-        return _step_emulator_legacy(emu, start_va, max_instructions,
-                                     stop_on_ret, printer)
-
-    # --- build session around the already-prepared emulator ---
+    # Note: EmulatorSession now handles 'vw=None' by creating a minimal environment internally
     sess = EmulatorSession(
         vw=vw,
         emu=emu,
@@ -314,44 +300,3 @@ def step_emulator(
 
     printer.final_summary(steps, emu, baseline)
     return steps
-
-
-def _step_emulator_legacy(emu, start_va, max_instructions, stop_on_ret, printer):
-    """Fallback when no workspace is available (shellcode without vw)."""
-    emu.setProgramCounter(start_va)
-    baseline = len(emu.getPathProp("writelog"))
-    printer.set_baseline(baseline)
-
-    rprint(f"\n[[green]*[/green]] Initial state:")
-    rprint(format_registers(emu))
-    rprint(f"\n{'=' * 78}")
-
-    step = 0
-    while step < max_instructions:
-        pc   = emu.getProgramCounter()
-        step += 1
-        insn_str = disasm(emu, pc)
-        printer.on_step(step, pc, insn_str, emu)
-
-        try:
-            emu.stepi()
-        except StopEmulation as e:
-            rprint(f"  !! ExitProcess({e.exit_code}), stopping")
-            break
-        except (envi.exc.BreakpointHit, envi.InvalidInstruction,
-                envi.SegmentationViolation, Exception) as exc:
-            printer.on_exception(exc, pc, emu)
-            break
-
-        printer.on_writes(emu)
-
-        if stop_on_ret and insn_str.strip().startswith("ret"):
-            rprint(f"\n[*] Function returned after {step} steps")
-            break
-
-        if emu.getProgramCounter() == 0:
-            rprint(f"\n[*] PC reached 0x0 after {step} steps")
-            break
-
-    printer.final_summary(step, emu, baseline)
-    return step

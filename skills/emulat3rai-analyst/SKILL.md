@@ -44,7 +44,7 @@ Even with internal memory sandboxing, the risk of **"Leaky Emulation"** exists. 
 - User wants to analyze a PE, DLL, or raw shellcode with `emulat3rai`.
 - User is unsure which `--realism-level` to choose.
 - User needs advice on `--crash-mode` (rollback/partial/continue).
-- User wants to combine `AntiLoopholeDetector`, `DeepExploreObserver`, or `MalwarePatternSkill`.
+- User wants to combine `AntiLoopholeDetector`, `DeepExploreObserver`, or `AntiDebugPattern`.
 - User wants CLI command examples for common malware analysis scenarios.
 
 ## When NOT to Use This Skill
@@ -54,6 +54,7 @@ Even with internal memory sandboxing, the risk of **"Leaky Emulation"** exists. 
 - Running unit tests or CI → use `uv run pytest tests/` directly.
 
 ---
+
 
 ## 1. Realism Level Decision Matrix
 
@@ -124,9 +125,10 @@ Observers live in `src/skills/`. Attach them via `EmulatorSession.set_observer()
 - **Tuning**: Adjust `warn_threshold` (default 50) to catch early-stage unpacking before it finishes.
 
 ### Pattern B: Anti-Analysis Neutralization
-**Observers**: `MalwarePatternSkill` + `DeepExploreObserver` | **Level**: 2
+**Observers**: `AntiDebugPattern` + `AntiAnalysisPattern` | **Level**: 2
 
-- `MalwarePatternSkill` monitors for `IsDebuggerPresent`, `NtQueryInformationProcess`, etc.
+- `AntiDebugPattern` monitors for `IsDebuggerPresent`, `NtQueryInformationProcess`, etc.
+- `AntiAnalysisPattern` detect VM artifacts and linearizes timing via `GetTickCount`.
 - **Forensic Signal**: Determines what technique, where in execution flow, and which parent function triggered the check.
 - **Force L2** to ensure PEB/TEB field values are accurate and all detection patterns trigger.
 
@@ -145,7 +147,7 @@ All flags below are confirmed from `src/cliargs.py`.
 
 ### Workflow A: Rapid Triage (PE)
 ```bash
-uv run python emulat3.py \
+python emulat3.py \
   --pe malware.exe \
   --realism-level 1 \
   --max 500000 \
@@ -157,7 +159,7 @@ Output: JSON summary with call tree and pattern hits. Save to `> triage.json`.
 
 ### Workflow B: Shellcode Triage
 ```bash
-uv run python emulat3.py \
+python emulat3.py \
   --sc-hex "4831c04889c7c3" \
   --realism-level 0 \
   --max 1000 \
@@ -166,7 +168,7 @@ uv run python emulat3.py \
 
 ### Workflow C: Deep Anti-Analysis Bypass (Packed DLL)
 ```bash
-uv run python emulat3.py \
+python emulat3.py \
   --pe packer.dll \
   --va 0x180001234 \
   --realism-level 2 \
@@ -182,7 +184,7 @@ uv run python emulat3.py \
 
 ### Workflow D: Bypass Minor Anti-Debug Triggers
 ```bash
-uv run python emulat3.py \
+python emulat3.py \
   --pe dropper.exe \
   --realism-level 1 \
   --crash-mode partial \
@@ -193,7 +195,7 @@ NOP-patches deliberate crashes; continues scanning for C2 setup, dropper writes.
 
 ### Workflow E: Targeted Function Analysis
 ```bash
-uv run python emulat3.py \
+python emulat3.py \
   --pe target.dll \
   --va 0x180005678 \
   --realism-level 2 \
@@ -224,11 +226,12 @@ sess = EmulatorSession(vw, emu, 0x140001000, cfg)
 # Attach all observers
 from src.skills.anti_loophole_detector import AntiLoopholeDetector
 from src.skills.deep_explore import DeepExploreObserver
-from src.skills.malware import MalwarePatternSkill
+from src.skills.malware import AntiDebugPattern, AntiAnalysisPattern
 
 sess.set_observer(AntiLoopholeDetector())
 sess.set_observer(DeepExploreObserver())
-sess.set_observer(MalwarePatternSkill())
+sess.set_observer(AntiDebugPattern())
+sess.set_observer(AntiAnalysisPattern())
 
 # Snapshot before entering unpacker
 sess.checkpoint()
@@ -246,5 +249,5 @@ print(sess.export_json())
 - Do not use `--crash-mode continue` with `--follow-calls` on high-depth trees; coverage will be
   noisy and attributably incorrect.
 - Verify the entry VA (`--va`) is a valid function boundary using `--list` first:
-  `uv run python emulat3.py --pe target.exe --list`
+  `python emulat3.py --pe target.exe --list`
 - Treat `AntiLoopholeDetector` alerts as hints, not conclusions; cross-check with `DeepExploreObserver`.

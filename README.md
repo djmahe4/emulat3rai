@@ -262,36 +262,35 @@ print(sess.export_json())
 
 ---
 
-## Skills
+## 🦾 Superpowered Agentic Development
 
-Custom analysis extensions live in `src/skills/`.
+`emulat3rai` is built specifically for **agentic, self-healing modularity**. Use the integrated architectural skill to guide AI agents through complex extensions:
 
-### AntiLoopholeDetector
+### 🧩 Architectural Skill
+- **Path**: [emulat3rai-architect](skills/emulat3rai-architect/SKILL.md)
+- **Superpower**: Provides a "Master Protocol" for self-healing code migration and malware pattern integration.
 
-Detects REP-prefixed instructions and hot addresses (potential infinite loops):
+### 🧪 Analyst Masterclass
+- **Path**: [emulat3rai-analyst](skills/emulat3rai/SKILL.md)
+- **Superpower**: Facilitates "Best Output" by providing strategic guidance on realism levels, recovery mechanisms, and skill synthesis.
 
-```python
-from src.skills import AntiLoopholeDetector
+---
 
-detector = AntiLoopholeDetector(warn_threshold=50, abort_threshold=5000)
-sess.set_observer(detector)
-sess.run()
-print(detector.report())
-```
+## 🧠 Integrated Analysis Skills
 
-### DeepExploreObserver
+Custom analysis engines and heuristics live in `src/skills/`.
 
-Builds a full call tree and logs every API hook fired:
+### 🔍 AntiLoopholeDetector
+- **Function**: Detects `REP`-prefixed instruction abuse and hot-address loops.
+- **Safety**: Automatically aborts or warns when a suspicious loop threshold is exceeded.
 
-```python
-from src.skills import DeepExploreObserver
+### 🌳 DeepExploreObserver
+- **Function**: Generates a high-fidelity call tree and logs every API hook interaction.
+- **Output**: Visualizes execution flow for identifying packer unpacking routines.
 
-explorer = DeepExploreObserver()
-sess.set_observer(explorer)
-sess.run()
-explorer.print_tree()
-print(explorer.summary())
-```
+### 🦠 MalwarePatternSkill
+- **Function**: Pattern-based detection for Anti-Debug, Anti-VM, and Code Injection.
+- **Signals**: Flags `IsDebuggerPresent`, `NtGlobalFlag`, and `PEB.BeingDebugged` lookups in the guest.
 
 ---
 

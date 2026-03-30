@@ -23,7 +23,7 @@ from .consts import *
 from .config import EmulatorConfig, CRASH_ROLLBACK, CRASH_PARTIAL, CRASH_CONTINUE
 from .environment import setup_environment
 from .analyzer import is_safe_to_follow
-from .hooks import build_default_registry, _ExitProcessCalled
+from .hooks import build_default_registry, StopEmulation
 from .observers import (
     ObserverMixin,
     EVT_INSTRUCTION, EVT_MEM_WRITE, EVT_EXCEPTION,
@@ -366,13 +366,38 @@ def step_emulator(
         # execute
         try:
             emu.stepi()
-        except _ExitProcessCalled as e:
+        except StopEmulation as e:
             rprint(f"  !! ExitProcess called ({e.exit_code}), stopping")
             break
         except (envi.exc.BreakpointHit,
                 envi.InvalidInstruction,
                 envi.SegmentationViolation,
                 Exception) as exc:
+            
+            # --- Advanced Recovery Logic ---
+            recovery_mode = cfg.crash_recovery
+            
+            if recovery_mode == "rollback":
+                if sess.rollback():
+                    rprint(f"  !! Crash ({type(exc).__name__}) - Rolling back to previous checkpoint")
+                    continue
+                else:
+                    rprint(f"  !! Crash ({type(exc).__name__}) - No checkpoints available for rollback")
+            
+            elif recovery_mode == "partial":
+                if op is not None:
+                    # NOP-patching: Write 0x90 over the failing instruction and skip it
+                    try:
+                        emu.writeMemory(pc, b"\x90" * len(op))
+                        emu.setProgramCounter(pc + len(op))
+                        rprint(f"  !! Crash ({type(exc).__name__}) - NOP-patching instruction at 0x{pc:x} and resuming")
+                        continue
+                    except Exception as e2:
+                        rprint(f"  !! Failed to NOP-patch at 0x{pc:x}: {e2}")
+                else:
+                    rprint(f"  !! Crash ({type(exc).__name__}) - Cannot NOP-patch (opcode unknown)")
+
+            # Fallback legacy behavior for calls (if no advanced recovery or failed)
             if sess._call_depth > 0 and sess._snap is not None:
                 emu.setEmuSnap(sess._snap)
                 printer._prev_wlog_len = sess._snap_wlog_len
@@ -424,7 +449,7 @@ def _step_emulator_legacy(emu, start_va, max_instructions, stop_on_ret, printer)
 
         try:
             emu.stepi()
-        except _ExitProcessCalled as e:
+        except StopEmulation as e:
             rprint(f"  !! ExitProcess({e.exit_code}), stopping")
             break
         except (envi.exc.BreakpointHit, envi.InvalidInstruction,

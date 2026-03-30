@@ -5,6 +5,9 @@ description = "Step through PE functions or shellcode instruction-by-instruction
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "rich>=14.3.3",
-    "viv-utils>=0.8.1",
+    "rich>=11.0.0",
+    "viv-utils>=0.7.0",
+    "vivisect>=1.1.0",
+    "pytest>=7.0.0",
+    "mockito>=1.2.0",
 ]

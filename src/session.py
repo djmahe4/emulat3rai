@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import envi
@@ -31,7 +32,7 @@ from .config import (
     CRASH_ROLLBACK, CRASH_PARTIAL, CRASH_CONTINUE,
 )
 from .consts import STACK_MEM_NAME
-from .hooks import HookRegistry, build_default_registry, _ExitProcessCalled
+from .hooks import HookRegistry, build_default_registry, StopEmulation
 from .observers import (
     ObserverMixin, BaseObserver,
     EVT_INSTRUCTION, EVT_MEM_WRITE, EVT_MEM_READ,
@@ -90,6 +91,7 @@ class EmulatorSession(ObserverMixin):
         self.start_va    = start_va
         self.cfg         = cfg or EmulatorConfig()
         self.hooks       = hook_registry or build_default_registry()
+        self.env         = None # populated in factory or manually
 
         self._step_count  = 0
         self._call_depth  = 0
@@ -102,6 +104,12 @@ class EmulatorSession(ObserverMixin):
         # writelog baseline (skip emulator-init writes)
         self._baseline_wlog_len = len(emu.getPathProp("writelog"))
         self._prev_wlog_len     = self._baseline_wlog_len
+
+        # Thread safety lock
+        self._lock = threading.Lock()
+        
+        # Checkpoint stack for rollbacks
+        self._checkpoints: List[Tuple[Dict[str, int], bytes]] = [] # [(regs, mem_snap), ...]
 
     # ------------------------------------------------------------------
     # Class-method constructors
@@ -119,13 +127,18 @@ class EmulatorSession(ObserverMixin):
             function_va = vw.getEntryPoints()[0]
         cfg = cfg or EmulatorConfig()
         emu = _make_raw_emulator(vw, cfg)
-        setup_environment(emu, cfg)
-        return cls(vw, emu, function_va, cfg, hook_registry)
+        from .environment import EnvironmentManager
+        mgr = EnvironmentManager(emu, cfg)
+        mgr.setup()
+        sess = cls(vw, emu, function_va, cfg, hook_registry)
+        sess.env = mgr
+        return sess
 
     @classmethod
     def from_shellcode(cls, sc_bytes: bytes,
                        cfg: Optional[EmulatorConfig] = None,
                        hook_registry: Optional[HookRegistry] = None) -> "EmulatorSession":
+        """Build an EmulatorSession from raw shellcode bytes."""
         from .misc import suppress_viv_logging
         suppress_viv_logging()
         cfg = cfg or EmulatorConfig()
@@ -135,9 +148,13 @@ class EmulatorSession(ObserverMixin):
             entry_point=cfg.sc_entry_offset,
         )
         emu = _make_raw_emulator(vw, cfg)
-        setup_environment(emu, cfg)
+        from .environment import EnvironmentManager
+        mgr = EnvironmentManager(emu, cfg)
+        mgr.setup()
         start_va = cfg.sc_base + cfg.sc_entry_offset
-        return cls(vw, emu, start_va, cfg, hook_registry)
+        sess = cls(vw, emu, start_va, cfg, hook_registry)
+        sess.env = mgr
+        return sess
 
     # ------------------------------------------------------------------
     # Observer helpers (proxies to ObserverMixin)
@@ -148,50 +165,111 @@ class EmulatorSession(ObserverMixin):
         observer._attach(self)
 
     # ------------------------------------------------------------------
-    # Snapshot helpers
+    # Snapshot Management
     # ------------------------------------------------------------------
 
-    def get_snapshot(self) -> Dict:
-        """Return a JSON-serialisable snapshot of current emulator state."""
-        regs: Dict[str, str] = {}
-        from .consts import AMD64_REGS
-        for name in AMD64_REGS:
-            try:
-                regs[name] = f"0x{self.emu.getRegisterByName(name):016x}"
-            except (AttributeError, KeyError, TypeError):
-                regs[name] = "0x????????????????"
-        regs["rip"]    = f"0x{self.emu.getProgramCounter():016x}"
-        regs["eflags"] = f"0x{self.emu.getRegisterByName('eflags'):08x}"
+    def take_snapshot(self) -> None:
+        """Take a full state snapshot of the current emulator state."""
+        with self._lock:
+            self._snap = self.emu.getEmuSnap()
+            self._snap_wlog_len = len(self.emu.getPathProp("writelog"))
 
-        wlog = self.emu.getPathProp("writelog")
-        writes = [
-            {"va": f"0x{va:016x}", "data": data.hex()}
-            for _, va, data in wlog[self._baseline_wlog_len:]
-        ]
+    def restore_snapshot(self, memory: bool = True) -> None:
+        """Restore the emulator to the last captured snapshot."""
+        with self._lock:
+            if self._snap is None:
+                return
+            
+            if memory:
+                # Full restore (Registers + Memory)
+                self.emu.setEmuSnap(self._snap)
+                self._prev_wlog_len = self._snap_wlog_len
+            else:
+                # Partial restore (Registers only)
+                regs = self._snap.get('regs', [])
+                for reg_idx, val in enumerate(regs):
+                    self.emu.setRegister(reg_idx, val)
 
-        return {
-            "step":    self._step_count,
-            "va":      f"0x{self.emu.getProgramCounter():016x}",
-            "registers": regs,
-            "memory_writes": writes,
-            "call_depth": self._call_depth,
-        }
+    def export_json(self) -> str:
+        """Helper for agentic consumption."""
+        return json.dumps(self.to_dict(), indent=2)
 
-    def export_json(self, indent: int = 2) -> str:
-        """Serialise the full event log to JSON."""
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Hybrid Serialization: All metadata + Raw bytes for high-value regions.
+        """
+        with self._lock:
+            # 1. Registers
+            regs: Dict[str, int] = {}
+            for name in self.emu.getRegisterNames():
+                try: regs[name] = self.emu.getRegisterByName(name)
+                except: regs[name] = 0
+
+            # 2. Memory Maps (Hybrid)
+            maps = []
+            high_value_bases = []
+            if self.env:
+                high_value_bases = [
+                    self.env.stack_base, self.env.heap_base,
+                    self.env.peb_base, self.env.teb_base
+                ]
+            
+            for va, size, perm, name in self.emu.getMemoryMaps():
+                m_info = {
+                    "va": f"0x{va:0x}",
+                    "size": size,
+                    "perm": perm,
+                    "name": name,
+                    "data": None
+                }
+                # Include raw bytes if it's a high-value region
+                if va in high_value_bases:
+                    try:
+                        m_info["data"] = self.emu.readMemory(va, size).hex()
+                    except: pass
+                maps.append(m_info)
+
+            return {
+                "arch": self._arch,
+                "start_va": f"0x{self.start_va:0x}",
+                "pc": f"0x{self.emu.getProgramCounter():0x}",
+                "registers": {k: f"0x{v:0x}" for k, v in regs.items()},
+                "config": self.cfg.to_dict(),
+                "memory_maps": maps,
+                "step_count": self._step_count,
+                "finished": self._finished
+            }
+
+    # ------------------------------------------------------------------
+    # Checkpoints & Rollback (Advanced Recovery)
+    # ------------------------------------------------------------------
+
+    def checkpoint(self) -> None:
+        """Save a recovery point (Registers + Memory)."""
+        with self._lock:
+            regs = {n: self.emu.getRegisterByName(n) for n in self.emu.getRegisterNames()}
+            snap = self.emu.getMemorySnap()
+            self._checkpoints.append((regs, snap))
+            logger.debug("Checkpoint created at 0x%x", self.emu.getProgramCounter())
+
+    def rollback(self) -> bool:
+        """Revert to the last checkpoint. Returns True on success."""
+        with self._lock:
+            if not self._checkpoints:
+                return False
+            regs, snap = self._checkpoints.pop()
+            self.emu.setMemorySnap(snap)
+            for name, val in regs.items():
+                self.emu.setRegisterByName(name, val)
+            logger.info("Rolled back to previous state. New PC: 0x%x", self.emu.getProgramCounter())
+            return True
+
+    def export_json(self) -> str:
+        """Helper for agentic consumption."""
         return json.dumps({
-            "start_va":  f"0x{self.start_va:016x}",
-            "steps":     self._step_count,
-            "config": {
-                "max_instructions": self.cfg.max_instructions,
-                "realism_level":    self.cfg.realism_level,
-                "crash_mode":       self.cfg.crash_mode,
-                "repmax":           self.cfg.repmax,
-                "stack_size":       self.cfg.stack_size,
-            },
-            "final_state": self.get_snapshot(),
-            "events":      self._events,
-        }, indent=indent)
+            "session_info": self.to_dict(),
+            "events": self._events
+        }, indent=2)
 
     # ------------------------------------------------------------------
     # Stepping API
@@ -211,11 +289,12 @@ class EmulatorSession(ObserverMixin):
 
     def step(self) -> bool:
         """
-        Execute one instruction.
+        Execute one instruction with thread-safety and internal locking.
         Returns True if stepping should continue, False if it should stop.
         """
-        if self._finished:
-            return False
+        with self._lock:
+            if self._finished:
+                return False
 
         if self._step_count == 0:
             self.emu.setProgramCounter(self.start_va)
@@ -363,7 +442,7 @@ class EmulatorSession(ObserverMixin):
         """stepi() with exception handling.  Returns True to continue."""
         try:
             self.emu.stepi()
-        except _ExitProcessCalled as e:
+        except StopEmulation as e:
             # ExitProcess is a normal termination, not an error condition
             self._log_event("exit_process", va=pc, exit_code=e.exit_code)
             self._finish()
@@ -397,17 +476,17 @@ class EmulatorSession(ObserverMixin):
                 self._finish()
                 return False
             elif mode == CRASH_PARTIAL:
-                # keep memory, reset registers only (best-effort)
-                try:
-                    snap_regs_only = self.emu.getEmuSnap()
-                    # restore just register state – vivisect snap contains both;
-                    # we fake it by taking a fresh snap from the next instruction
-                    pass
-                except Exception:
-                    pass
-                return True     # keep going
+                # restore registers only, keep memory writes (best-effort)
+                self.restore_snapshot(memory=False)
+                # skip the faulting instruction
+                self.emu.setProgramCounter(pc + (len(op) if op else 1))
+                return True
             else:  # CRASH_CONTINUE
-                return True     # log + proceed
+                # skip the faulting instruction and keep going
+                self.emu.setProgramCounter(pc + (len(op) if op else 1))
+                return True
+
+        return True
 
         return True
 

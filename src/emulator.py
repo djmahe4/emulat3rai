@@ -327,10 +327,11 @@ def step_emulator(
             if target is not None:
                 name = sess._resolve_import_name(target)
                 if name:
-                    fired = sess.hooks.maybe_fire(name, emu, emit_fn=None)
+                    def _emit_hook(hook_name, args, ret_val, emu, **kw):
+                        rprint(f"  >> hooked: {hook_name}() -> 0x{ret_val:x}" if isinstance(ret_val, int) else f"  >> hooked: {hook_name}()")
+                    fired = sess.hooks.maybe_fire(name, emu, emit_fn=_emit_hook)
                     if fired:
                         emu.setProgramCounter(pc + len(op))
-                        rprint(f"  >> hooked: {name}()")
                         rprint(format_registers(emu))
                         printer.on_writes(emu)
                         hook_fired = True

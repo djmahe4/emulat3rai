@@ -146,14 +146,14 @@ def _build_peb(cfg: EmulatorConfig) -> bytes:
 
 TEB_SIZE = 0x400
 
-def _build_teb(stack_base: int, stack_limit: int,
+def _build_teb(stack_top: int, stack_limit: int,
                peb_va: int, teb_va: int) -> bytes:
     buf = bytearray(TEB_SIZE)
     # ExceptionList = end-of-chain sentinel
     struct.pack_into("<Q", buf, 0x00, 0xFFFFFFFFFFFFFFFF)
-    # StackBase (grows downwards on x64 Windows, so "base" is the high address)
-    struct.pack_into("<Q", buf, 0x08, stack_base)
-    # StackLimit
+    # StackBase (Windows names the high address 'StackBase' because it's where the stack 'starts' before growing down)
+    struct.pack_into("<Q", buf, 0x08, stack_top)
+    # StackLimit (low address – the guard page boundary)
     struct.pack_into("<Q", buf, 0x10, stack_limit)
     # Self pointer
     struct.pack_into("<Q", buf, 0x30, teb_va)
@@ -196,11 +196,11 @@ def _apply_repmax(emu: Any, cfg: EmulatorConfig) -> None:
 
 def _setup_peb_teb(emu: Any, cfg: EmulatorConfig) -> None:
     # Stack limits for TEB
-    stack_base  = emu.stack_map_base + cfg.stack_size   # high address
+    stack_top   = emu.stack_map_base + cfg.stack_size   # high address (Windows 'StackBase')
     stack_limit = emu.stack_map_base                    # low address
 
     peb_data = _build_peb(cfg)
-    teb_data = _build_teb(stack_base, stack_limit, FAKE_PEB_BASE, FAKE_TEB_BASE)
+    teb_data = _build_teb(stack_top, stack_limit, FAKE_PEB_BASE, FAKE_TEB_BASE)
 
     _add_map(emu, FAKE_PEB_BASE, PEB_SIZE + 0x100, "PEB", peb_data)
     _add_map(emu, FAKE_TEB_BASE, TEB_SIZE,          "TEB", teb_data)

@@ -158,7 +158,7 @@ class EmulatorSession(ObserverMixin):
         for name in AMD64_REGS:
             try:
                 regs[name] = f"0x{self.emu.getRegisterByName(name):016x}"
-            except Exception:
+            except (AttributeError, KeyError, TypeError):
                 regs[name] = "0x????????????????"
         regs["rip"]    = f"0x{self.emu.getProgramCounter():016x}"
         regs["eflags"] = f"0x{self.emu.getRegisterByName('eflags'):08x}"
@@ -364,7 +364,8 @@ class EmulatorSession(ObserverMixin):
         try:
             self.emu.stepi()
         except _ExitProcessCalled as e:
-            self.emit(EVT_EXCEPTION, exc=e, va=pc, emu=self.emu)
+            # ExitProcess is a normal termination, not an error condition
+            self._log_event("exit_process", va=pc, exit_code=e.exit_code)
             self._finish()
             return False
         except (envi.exc.BreakpointHit,

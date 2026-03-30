@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from .consts import MAX_INST_SIZE, STACK_CTX, MEGABYTE
@@ -45,7 +45,7 @@ class EmulatorConfig:
     follow_depth: int = 5       # max call-follow depth (0 = unlimited)
 
     # --- stack ---
-    stack_size: int = field(default_factory=lambda: int(0.5 * MEGABYTE))  # 512 KB default
+    stack_size: int = 524288    # 512 KB default (0.5 * MEGABYTE)
     stack_context: int = STACK_CTX
 
     # --- realism ---

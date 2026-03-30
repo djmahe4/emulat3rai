@@ -135,8 +135,8 @@ def hook_virtual_alloc(emu: Any, args: tuple) -> int:
 
 def hook_virtual_alloc_ex(emu: Any, args: tuple) -> int:
     """VirtualAllocEx(hProcess, lpAddress, dwSize, flType, flProtect) → ptr"""
-    # args[0] = hProcess (ignored), rest same as VirtualAlloc
-    _h_proc, _lp_address, dw_size, _alloc_type, _protect = (*args, 0)[:5]
+    # args[0] = hProcess (ignored), args[1] = lpAddress, args[2] = dwSize
+    dw_size = args[2] if len(args) > 2 else 0
     size = dw_size if dw_size > 0 else 0x1000
     return _emu_alloc(emu, size)
 

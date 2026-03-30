@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, asdict
 from typing import Optional, Any
 
-from .consts import MAX_INST_SIZE, STACK_CTX
+from .consts import MAX_INST_SIZE, STACK_CTX, MEGABYTE
 
 # ---------------------------------------------------------------------------
 # Realism level constants
@@ -30,7 +30,7 @@ CRASH_CONTINUE = "continue"   # log crash and keep going
 # ---------------------------------------------------------------------------
 # Size constants
 # ---------------------------------------------------------------------------
-MEGABYTE = 1024 * 1024        # 1 MiB — used for stack/heap size calculations
+# Size constants (consolidated in consts.py)
 
 # ---------------------------------------------------------------------------
 # Config dataclass

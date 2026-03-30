@@ -33,7 +33,6 @@ from .config import (
     EmulatorConfig,
     CRASH_ROLLBACK, CRASH_PARTIAL, CRASH_CONTINUE,
 )
-from .consts import STACK_MEM_NAME
 from .hooks import HookRegistry, build_default_registry, StopEmulation
 from .observers import (
     ObserverMixin, BaseObserver,
@@ -41,7 +40,6 @@ from .observers import (
     EVT_EXCEPTION, EVT_CALL, EVT_RETURN,
     EVT_HOOK_FIRED, EVT_SESSION_START, EVT_SESSION_END,
 )
-from .environment import setup_environment
 from .analyzer import is_safe_to_follow
 
 logger = logging.getLogger(__name__)
@@ -94,9 +92,13 @@ class EmulatorSession(ObserverMixin):
         self.cfg         = cfg or EmulatorConfig()
         self.hooks       = hook_registry or build_default_registry()
         self.env         = None # populated in factory or manually
+        
+        # Arch identification for JSON export
+        self._arch        = self.emu.getMeta("Architecture") or "unknown"
 
         self._step_count  = 0
         self._call_depth  = 0
+        self._finished    = False
         self._call_stack: List[Tuple[int, int]] = []   # [(from_va, target_va), ...]
         self._snap: Optional[Any]  = None              # pre-call snapshot
         self._snap_wlog_len: int   = 0

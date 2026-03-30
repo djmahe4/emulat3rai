@@ -22,6 +22,8 @@ import logging
 import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .consts import STACK_MEM_NAME, AMD64_REGS
+
 import envi
 import envi.exc
 import viv_utils
@@ -160,9 +162,6 @@ class EmulatorSession(ObserverMixin):
     # Observer helpers (proxies to ObserverMixin)
     # ------------------------------------------------------------------
 
-    def set_observer(self, observer: BaseObserver) -> None:
-        """Attach a BaseObserver instance to this session."""
-        observer._attach(self)
 
     # ------------------------------------------------------------------
     # Snapshot Management
@@ -190,9 +189,6 @@ class EmulatorSession(ObserverMixin):
                 for reg_idx, val in enumerate(regs):
                     self.emu.setRegister(reg_idx, val)
 
-    def export_json(self) -> str:
-        """Helper for agentic consumption."""
-        return json.dumps(self.to_dict(), indent=2)
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -488,8 +484,6 @@ class EmulatorSession(ObserverMixin):
 
         return True
 
-        return True
-
     def _do_call_manually(self, op: Any) -> bool:
         """Push return address, set PC to target.  Returns True on success."""
         try:
@@ -570,7 +564,6 @@ def emu_state_to_json(emu: Any, start_va: int, steps: int,
     *baseline_wlog_len* should be the writelog length captured before stepping began,
     so that stack-init writes are excluded from the output.
     """
-    from .consts import AMD64_REGS
     cfg = cfg or EmulatorConfig()
 
     regs: Dict[str, str] = {}

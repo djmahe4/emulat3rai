@@ -17,21 +17,22 @@ Each step prints:
 emulat3rai/
 ├── emulat3.py          # CLI entry point
 └── src/
+    ├── __init__.py     # Public API (EmulatorConfig, EmulatorSession, etc.)
     ├── config.py       # EmulatorConfig – all tunable knobs
     ├── emulator.py     # Core vivisect wrapper + step_emulator()
-    ├── session.py      # EmulatorSession – high-level agent API
+    ├── session.py      # EmulatorSession – unified high-level API
     ├── observers.py    # Observer/callback system
-    ├── hooks.py        # API hooks registry (Windows API stubs)
-    ├── environment.py  # PEB/TEB realism, FS/GS, stack setup
+    ├── hooks.py        # HookRegistry (Windows API stubs)
+    ├── environment.py  # PEB/TEB realism, GS base, stack setup
     ├── analyzer.py     # Static analysis helpers
-    ├── pe.py           # PE loading + emulate_pe()
-    ├── shellcode.py    # Shellcode loading + emulate_shellcode()
+    ├── pe.py           # PE loading logic
+    ├── shellcode.py    # Shellcode loading logic
     ├── cliargs.py      # argparse parser
-    ├── consts.py       # Constants (register names, EFLAGS, …)
-    ├── misc.py         # Banner, hex parser, logging suppressor
-    └── skills/
-        ├── anti_loophole_detector.py
-        └── deep_explore.py
+    ├── consts.py       # Constants (registers, EFLAGS, etc.)
+    ├── misc.py         # Banner, logging, utility functions
+    └── skills/         # Analysis observers and pattern logic
+        ├── malware.py  # MalwarePatternSkill (Anti-Debug, etc.)
+        └── ...
 ```
 
 ---
@@ -93,7 +94,7 @@ python emulat3.py --sc-hex "\x48\x31\xc0\xc3"
 # Level 0 (default) – minimal, zero-filled stack
 python emulat3.py --pe malware.exe --realism-level 0
 
-# Level 1 – randomised stack, PEB/TEB stubs, FS/GS base set
+# Level 1 – randomized stack, PEB/TEB stubs, GS base set
 python emulat3.py --pe malware.exe --realism-level 1
 
 # Level 2 – full PEB/TEB, fake heap with entropy, high-realism fingerprint resistance
@@ -149,11 +150,11 @@ python emulat3.py --sc-hex "48C7C00A000000C3" --json-output
 
 ## Realism Levels Explained
 
-| Level | Stack | PEB/TEB | Heap | FS/GS |
-|-------|-------|---------|------|-------|
+| Level | Stack | PEB/TEB | Heap | GS Base |
+|-------|-------|---------|------|---------|
 | 0 – Minimal | zero-filled | none | none | not set |
-| 1 – Moderate | randomised entropy | stubs (BeingDebugged=0, NtGlobalFlag=0) | none | GS→TEB |
-| 2 – High | randomised entropy | full field population | 1 MB fake heap | GS→TEB |
+| 1 – Moderate | randomized entropy | stubs (BeingDebugged=0, NtGlobalFlag=0) | none | set to TEB |
+| 2 – High | randomized entropy | full field population | 1 MB fake heap | set to TEB |
 
 Use level ≥1 to bypass common anti-emulation fingerprint checks (PEB.BeingDebugged, NtGlobalFlag, stack entropy checks).
 
@@ -266,13 +267,13 @@ print(sess.export_json())
 
 `emulat3rai` is built specifically for **agentic, self-healing modularity**. Use the integrated architectural skill to guide AI agents through complex extensions:
 
-### 🧩 Architectural Skill
+### 🧩 Architectural Improvisor
 - **Path**: [emulat3rai-architect](skills/emulat3rai-architect/SKILL.md)
-- **Superpower**: Provides a "Master Protocol" for self-healing code migration and malware pattern integration.
+- **Superpower**: Use this to extend the emulator (hooks, refactors, core logic).
 
-### 🧪 Analyst Masterclass
-- **Path**: [emulat3rai-analyst](skills/emulat3rai/SKILL.md)
-- **Superpower**: Facilitates "Best Output" by providing strategic guidance on realism levels, recovery mechanisms, and skill synthesis.
+### 🧪 Analyst Strategist
+- **Path**: [emulat3rai-analyst](skills/emulat3rai-analyst/SKILL.md)
+- **Superpower**: Use this to perform malware analysis and choose realism strategies.
 
 ---
 

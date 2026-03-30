@@ -1,12 +1,12 @@
 ---
 name: emulat3rai-architect
 description: >
-  Use this skill when extending or refactoring the emulat3rai modular architecture: adding
-  API hooks to HookRegistry, creating new analysis observers in src/skills/, modifying
-  EmulatorConfig/EmulatorSession, or following the self-healing agentic migration protocol.
+  Use this skill to update, extend, and improve the emulat3rai codebase and analysis tools. 
+  Focuses on codebase "improvisation": refactoring modules, adding API hooks to HookRegistry, 
+  creating new analysis observers in src/skills/, or modifying EmulatorConfig/EmulatorSession.
   Enforces TDD closure (uv run pytest tests/) before any task is marked done.
-  Do NOT use for choosing realism levels, analyzing malware samples, or CLI workflows;
-  use the emulat3rai-analyst skill for those tasks.
+  Do NOT use for performing reverse engineering on samples or choosing realism levels;
+  use the emulat3rai-analyst skill instead.
 risk: safe
 category: architecture
 tags: [emulator, architecture, hooks, observers, tdd, vivisect, modular-design]
@@ -15,9 +15,31 @@ date_added: "2026-03-30"
 
 # emulat3rai-architect: Modular Architecture Protocol
 
-Use this skill to extend, maintain, or migrate the `emulat3rai` codebase according to its
-modular, agent-friendly design principles. All changes must follow the Self-Healing Protocol
-below and pass `uv run pytest tests/` before being considered complete.
+Use this skill to extend, maintain, or migrate the `emulat3rai` codebase and improve 
+its analysis capabilities.
+
+## Cross-Platform Strategy & Modularity
+
+> [!IMPORTANT]
+> **Priority: Stability First.** Layer abstractions before implementing features.
+
+To support Linux/ELF malware without breaking Windows stability, the following modular architecture must be followed:
+
+### 1. ArchContext Abstraction
+Wrap CPU state (Registers/Memory) in a generic interface.
+- `get_register(name)` / `set_register(name, value)`
+- `read_memory(addr, size)` / `write_memory(addr, data)`
+- *Standard*: Use `platform/arch/x86_64/` for specific logic.
+
+### 2. OS Abstraction Layer
+- **`OSEmulator`**: Base class for `WindowsOSEmulator` and `LinuxOSEmulator`.
+- **`SyscallTable`**: OS-specific lookup for `NtQuery` vs `sys_read`.
+- **`FileObject`**: Abstract interface for Windows Handles (64-bit) vs Linux FDs (int).
+
+### 3. Event/Hooking System
+Maintain a generic `HookManager` that fires standardized events (`MEMORY_WRITE`, `PRE_SYSCALL`) regardless of the target OS.
+
+---
 
 ## When to Use This Skill
 
@@ -31,8 +53,8 @@ below and pass `uv run pytest tests/` before being considered complete.
 ## When NOT to Use This Skill
 
 - Choosing realism levels or crash-mode strategies for a specific sample → use **emulat3rai-analyst**.
-- Running the emulator on a malware file → use the CLI directly or **emulat3rai-analyst**.
-- Writing external scripts or tooling that consumes `emulat3rai` as a library.
+- Running the emulator on a malware file to help a user perform RE → use **emulat3rai-analyst**.
+- General advice for the user on how to analyze a specific sample.
 
 ---
 

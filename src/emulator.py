@@ -170,7 +170,7 @@ def do_call_manually(emu: Any, op: Any) -> bool:
 # Rich-printer observer (used by step_emulator)
 # ---------------------------------------------------------------------------
 
-class _RichPrinterObserver:
+class _RichPrinterObserver(BaseObserver):
     """Internal observer that reproduces the original rich-based output."""
 
     def __init__(self, stack_context: int = STACK_CTX) -> None:
@@ -178,27 +178,26 @@ class _RichPrinterObserver:
         self._prev_wlog_len = 0
         self._baseline      = 0
 
-    def set_baseline(self, length: int) -> None:
-        self._baseline      = length
-        self._prev_wlog_len = length
+    def on_session_start(self, *, event: str, va: int, config: Any, **kw):
+        rprint(f"\n[[green]*[/green]] Initial state:")
+        # We don't have emu here directly in the event, but we can't easily get it
+        # unless we pass it. EmulatorSession.step emits emu.
+        pass
 
-    def on_step(self, step: int, pc: int, insn: str, emu: Any) -> None:
+    def on_instruction(self, *, event: str, step: int, va: int, insn: str, emu: Any, **kw):
         rprint(f"\nStep [yellow]{step:>4d}[/yellow] | "
-               f"[magenta]0x{pc:016x}[/magenta]: [cyan]{insn}[/cyan]")
+               f"[magenta]0x{va:016x}[/magenta]: [cyan]{insn}[/cyan]")
         rprint(f"{'-' * 78}")
         rprint(format_registers(emu))
         if self.stack_context > 0:
             rprint(f"\n  Stack:")
             rprint(format_stack(emu, self.stack_context))
 
-    def on_writes(self, emu: Any) -> None:
-        wlog = emu.getPathProp("writelog")
-        if len(wlog) > self._prev_wlog_len:
-            for _, va, data in wlog[self._prev_wlog_len:]:
-                rprint(format_write(va, data))
-            self._prev_wlog_len = len(wlog)
+    def on_memory_write(self, *, event: str, va: int, data: bytes, emu: Any, **kw):
+        rprint(format_write(va, data))
 
-    def on_exception(self, exc: Exception, pc: int, emu: Any) -> None:
+    def on_exception(self, *, event: str, exc: Exception, va: int, emu: Any, **kw):
+        pc = va
         if isinstance(exc, envi.SegmentationViolation):
             rprint(f"  !! SEGFAULT at 0x{pc:x}: {exc}")
             rprint(f"     (memory access to unmapped region)")
@@ -210,6 +209,19 @@ class _RichPrinterObserver:
             rprint(f"  !! INVALID INSTRUCTION at 0x{pc:x}: {exc}")
         else:
             rprint(f"  !! EXCEPTION at 0x{pc:x}: {type(exc).__name__}: {exc}")
+
+    def on_hook_fired(self, *, event: str, hook_name: str, args: tuple, ret_val: Any, emu: Any, **kw):
+        rprint(f"  >> hooked: {hook_name}() -> 0x{ret_val:x}" if isinstance(ret_val, int) else f"  >> hooked: {hook_name}()")
+        rprint(format_registers(emu))
+
+    def on_call(self, *, event: str, from_va: int, target: int, depth: int, emu: Any, **kw):
+        rprint(f"  >> following call to 0x{target:x}")
+        rprint(format_registers(emu))
+
+    def on_session_end(self, *, event: str, steps: int, va: int, config: Any, **kw):
+        # This summary needs the emulator object which isn't in session_end by default
+        # but we can get it from the session if we were attached.
+        pass
 
     def final_summary(self, step: int, emu: Any, baseline: int) -> None:
         rprint(f"\n{'=' * 78}")
@@ -275,7 +287,7 @@ def step_emulator(
 
     printer = _RichPrinterObserver(stack_context=stack_context)
 
-    # If no workspace provided, create a minimal session without one
+    # Fallback for minimal setups without workspace
     if vw is None:
         return _step_emulator_legacy(emu, start_va, max_instructions,
                                      stop_on_ret, printer)
@@ -288,11 +300,7 @@ def step_emulator(
         cfg=cfg,
         hook_registry=build_default_registry(),
     )
-
-    baseline = sess._baseline_wlog_len
-    printer.set_baseline(baseline)
-
-    emu.setProgramCounter(start_va)
+    sess.set_observer(printer)
 
     rprint(f"\n[[green]*[/green]] Initial state:")
     rprint(format_registers(emu))
@@ -301,133 +309,11 @@ def step_emulator(
         rprint(format_stack(emu, stack_context))
     rprint(f"\n{'=' * 78}")
 
-    step = 0
-    while step < max_instructions:
-        pc = emu.getProgramCounter()
-        step += 1
+    baseline = sess._baseline_wlog_len
+    steps = sess.run()
 
-        insn_str = disasm(emu, pc)
-        printer.on_step(step, pc, insn_str, emu)
-
-        try:
-            op = emu.parseOpcode(pc)
-        except Exception:
-            op = None
-
-        hook_fired = False
-        followed   = False
-
-        if op is not None and op.mnem == "call":
-            target = None
-            try:
-                target = op.getOperValue(0, emu)
-            except Exception:
-                pass
-
-            if target is not None:
-                name = sess._resolve_import_name(target)
-                if name:
-                    def _emit_hook(hook_name, args, ret_val, emu, **kw):
-                        rprint(f"  >> hooked: {hook_name}() -> 0x{ret_val:x}" if isinstance(ret_val, int) else f"  >> hooked: {hook_name}()")
-                    fired = sess.hooks.maybe_fire(name, emu, emit_fn=_emit_hook)
-                    if fired:
-                        emu.setProgramCounter(pc + len(op))
-                        rprint(format_registers(emu))
-                        printer.on_writes(emu)
-                        hook_fired = True
-
-            if not hook_fired and op is not None and op.mnem == "call":
-                if (cfg.follow_calls or cfg.follow_va is not None) and vw is not None:
-                    depth_ok = sess._call_depth < max(cfg.follow_depth, 1)
-                    if depth_ok:
-                        should_follow = False
-                        if cfg.follow_va is not None:
-                            should_follow = (target == cfg.follow_va)
-                        else:
-                            should_follow = is_safe_to_follow(vw, emu, op)
-
-                        if should_follow and target is not None:
-                            sess._snap          = emu.getEmuSnap()
-                            sess._snap_wlog_len = len(emu.getPathProp("writelog"))
-                            printer._prev_wlog_len = sess._snap_wlog_len
-                            if do_call_manually(emu, op):
-                                sess._call_depth += 1
-                                rprint(f"  >> following call to 0x{target:x}")
-                                rprint(format_registers(emu))
-                                printer.on_writes(emu)
-                                followed = True
-
-        if op is not None and op.mnem.startswith("ret") and sess._call_depth > 0:
-            sess._call_depth -= 1
-
-        if hook_fired or followed:
-            continue
-
-        # execute
-        try:
-            emu.stepi()
-        except StopEmulation as e:
-            rprint(f"  !! ExitProcess called ({e.exit_code}), stopping")
-            break
-        except (envi.exc.BreakpointHit,
-                envi.InvalidInstruction,
-                envi.SegmentationViolation,
-                Exception) as exc:
-            
-            # --- Advanced Recovery Logic ---
-            recovery_mode = cfg.crash_recovery
-            
-            if recovery_mode == "rollback":
-                if sess.rollback():
-                    rprint(f"  !! Crash ({type(exc).__name__}) - Rolling back to previous checkpoint")
-                    continue
-                else:
-                    rprint(f"  !! Crash ({type(exc).__name__}) - No checkpoints available for rollback")
-            
-            elif recovery_mode == "partial":
-                if op is not None:
-                    # NOP-patching: Write 0x90 over the failing instruction and skip it
-                    try:
-                        emu.writeMemory(pc, b"\x90" * len(op))
-                        emu.setProgramCounter(pc + len(op))
-                        rprint(f"  !! Crash ({type(exc).__name__}) - NOP-patching instruction at 0x{pc:x} and resuming")
-                        continue
-                    except Exception as e2:
-                        rprint(f"  !! Failed to NOP-patch at 0x{pc:x}: {e2}")
-                else:
-                    rprint(f"  !! Crash ({type(exc).__name__}) - Cannot NOP-patch (opcode unknown)")
-
-            # Fallback legacy behavior for calls (if no advanced recovery or failed)
-            if sess._call_depth > 0 and sess._snap is not None:
-                emu.setEmuSnap(sess._snap)
-                printer._prev_wlog_len = sess._snap_wlog_len
-                sess._call_depth = 0
-                sess._snap       = None
-                rprint(f"  !! call crashed ({type(exc).__name__}), rolling back and skipping")
-                try:
-                    emu.stepi()
-                except Exception:
-                    pass
-                rprint(format_registers(emu))
-                printer.on_writes(emu)
-                continue
-
-            printer.on_exception(exc, pc, emu)
-            break
-
-        printer.on_writes(emu)
-
-        if stop_on_ret and insn_str.strip().startswith("ret") and sess._call_depth == 0:
-            rprint(f"\n[*] Function returned after {step} steps")
-            break
-
-        new_pc = emu.getProgramCounter()
-        if new_pc == 0:
-            rprint(f"\n[*] PC reached 0x0 after {step} steps (likely end of shellcode)")
-            break
-
-    printer.final_summary(step, emu, baseline)
-    return step
+    printer.final_summary(steps, emu, baseline)
+    return steps
 
 
 def _step_emulator_legacy(emu, start_va, max_instructions, stop_on_ret, printer):

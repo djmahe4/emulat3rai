@@ -9,11 +9,8 @@ from .analyzer import hexdump
 
 def emulate_shellcode(
     sc_bytes: bytes,
-    base: int = DEFAULT_SC_BASE,
-    entry_offset: int = 0,
-    max_instructions: int = MAX_INST_SIZE,
-    stack_context: int = STACK_CTX,
-    cfg: EmulatorConfig = None,
+    cfg: Optional[EmulatorConfig] = None,
+    **kwargs,
 ):
     """
     Load raw x64 shellcode into a vivisect workspace and step through it.
@@ -21,11 +18,24 @@ def emulate_shellcode(
     This uses the same approach as FLOSS for shellcode analysis
     (see floss/main.py which calls viv_utils.getShellcodeWorkspace).
     """
+    if cfg is None:
+        cfg = EmulatorConfig(
+            max_instructions=kwargs.get("max_instructions", MAX_INST_SIZE),
+            stack_context=kwargs.get("stack_context", STACK_CTX),
+            sc_base=kwargs.get("base", DEFAULT_SC_BASE),
+            sc_entry_offset=kwargs.get("entry_offset", 0),
+            stop_on_ret=False,
+        )
+
+    base = cfg.sc_base
+    entry_offset = cfg.sc_entry_offset
+    max_instructions = cfg.max_instructions
+    sc_size = len(sc_bytes)
+
     inst_num = 0 
     suppress_viv_logging()
 
     entry_point = base + entry_offset
-    sc_size = len(sc_bytes)
 
     rprint(f"\n[[yellow]*[/yellow]] Shellcode Size:     {sc_size} bytes")
     rprint(f"[[yellow]*[/yellow]] Base address:       0x{base:x}")
@@ -63,15 +73,6 @@ def emulate_shellcode(
     rprint(f"[*] total number of instructions: {inst_num}")
     rprint(f"[[magenta]*[/magenta]] Creating emulator, stepping up to {max_instructions} instructions...")
 
-    if cfg is None:
-        cfg = EmulatorConfig(
-            max_instructions=max_instructions,
-            stack_context=stack_context,
-            sc_base=base,
-            sc_entry_offset=entry_offset,
-            stop_on_ret=False,
-        )
-
     emu = make_emulator(vw, cfg)
     wlog_baseline = len(emu.getPathProp("writelog"))
 
@@ -79,10 +80,10 @@ def emulate_shellcode(
     steps = step_emulator(
         emu,
         entry_point,
-        inst_num,
+        max_instructions=cfg.max_instructions,
         stop_on_ret=False,
         vw=vw,
-        stack_context=stack_context,
+        stack_context=cfg.stack_context,
         cfg=cfg,
     )
 

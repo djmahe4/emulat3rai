@@ -23,8 +23,7 @@ def main():
         cfg.sc_base         = args.base
         cfg.sc_entry_offset = args.entry
         cfg.stop_on_ret     = False
-        emulate_shellcode(sc_bytes, args.base, args.entry, args.max,
-                          stack_context=args.stack_context, cfg=cfg)
+        emulate_shellcode(sc_bytes, cfg=cfg)
         return
 
     if args.shellcode:
@@ -33,8 +32,7 @@ def main():
         cfg.sc_base         = args.base
         cfg.sc_entry_offset = args.entry
         cfg.stop_on_ret     = False
-        emulate_shellcode(sc_bytes, args.base, args.entry, args.max,
-                          stack_context=args.stack_context, cfg=cfg)
+        emulate_shellcode(sc_bytes, cfg=cfg)
         return
 
     if not args.pe:

@@ -1,11 +1,11 @@
 ---
 name: emulat3rai-analyst
 description: >
-  Use this skill when a user asks how to analyze a malware sample, configure realism levels,
-  choose a crash recovery mode, or combine multiple analysis observers for maximum forensic signal
-  using the emulat3rai x64 emulator. Provides imperative decision logic for realism level selection
-  (0/1/2), recovery strategy choice (rollback/partial/continue), and observer synthesis patterns.
-  Do NOT use for code architecture changes, adding new hooks, or refactoring the emulator itself;
+  Use this skill to help the user perform reverse engineering and behavioral analysis on 
+  malware samples. Provides guidance on configuring realism levels, choosing crash recovery 
+  modes, and synthesizing multiple analysis observers for maximum forensic signal.
+  Focuses on the "how-to" of analysis for the end-user.
+  Do NOT use for internal code refactoring or improvising the emulator tools;
   use the emulat3rai-architect skill instead.
 risk: safe
 category: malware-analysis
@@ -15,9 +15,29 @@ date_added: "2026-03-30"
 
 # emulat3rai-analyst: Maximizing Forensic Output
 
-Use this skill to extract the highest-fidelity forensic signal from the `emulat3rai` x64 emulator.
-The emulator wraps the `vivisect` engine (same backend as Mandiant FLOSS) and exposes a modular,
-observer-driven analysis pipeline.
+Use this skill to help the user extract the highest-fidelity forensic signal from the 
+`emulat3rai` x64 emulator. The emulator wraps the `vivisect` engine and exposes a 
+modular, observer-driven analysis pipeline for reverse engineers.
+
+## Safe Sandbox Practices (Critical)
+
+> [!CAUTION]
+> **ALWAYS RUN `emulat3rai` WITHIN AN ISOLATED VIRTUAL MACHINE (VM) OR CONTAINER.**
+
+Even with internal memory sandboxing, the risk of **"Leaky Emulation"** exists. Malicious code is designed to find flaws in execution environments.
+
+### Risks of Leaky Emulation
+- **Emulator Vulnerabilities**: Bugs in the emulation engine or underlying libraries (`Vivisect`) could be exploited to escape to the host.
+- **Host OS Interaction**: Imperfections in file system or network mocks can allow malware to reach host resources.
+- **Advanced Evasion**: Sophisticated malware may detect the emulator and trigger specific breakout exploits.
+
+### Recommended Setup
+1. **Dedicated VM**: Use VirtualBox, VMware, or QEMU.
+2. **Network Isolation**: Use "Host-Only" or NAT without port forwarding. Block outbound internet by default.
+3. **Snapshots**: Take a clean snapshot *before* analysis and revert immediately after.
+4. **No Sensitive Data**: Never store personal or work credentials in the analysis environment.
+
+---
 
 ## When to Use This Skill
 
@@ -90,34 +110,30 @@ Set with `--crash-mode {rollback|partial|continue}`.
 
 ---
 
-## 3. Observer Synthesis: Combining Analysis Skills
+---
 
-Analysis observers live in `src/skills/`. Attach them via `EmulatorSession.set_observer()` or by
-importing and instantiating them. Run multiple observers together for multi-dimensional signal.
+## 3. Observer Synthesis & Signal Correlation
 
-### Pattern A: Obfuscation / Unpacking Detection
+Observers live in `src/skills/`. Attach them via `EmulatorSession.set_observer()`. Combine them for multi-dimensional signal detection.
+
+### Pattern A: Obfuscation & XOR-Loop Detection
 **Observers**: `AntiLoopholeDetector` + `DeepExploreObserver`
 
-- `AntiLoopholeDetector` flags REP-family instruction abuse (`REPNZ SCASB`, `REP STOSB`)
-  and hot-address loops that exceed `--repmax N` (default: 256 iterations).
-- `DeepExploreObserver` maps the full call tree and logs all `EVT_CALL` / `EVT_RETURN` events.
-- **Forensic Signal**: Correlate loop alerts with call-tree depth to pinpoint the unpacker stub
-  and distinguish it from benign bulk-copy operations (e.g., `memset` inside CRT startup).
+- `AntiLoopholeDetector` flags REP-family instructions and "Hot Addresses" (high-visit counts).
+- **Forensic Signal**: Correlate loop alerts with call-tree depth. A tight loop in a leaf function that writes to memory is a high indicator of an **XOR-unpacker stub**.
+- **Tuning**: Adjust `warn_threshold` (default 50) to catch early-stage unpacking before it finishes.
 
 ### Pattern B: Anti-Analysis Neutralization
 **Observers**: `MalwarePatternSkill` + `DeepExploreObserver` | **Level**: 2
 
-- `MalwarePatternSkill` monitors for known anti-debug/anti-VM API calls:
-  `IsDebuggerPresent` → forced to return 0, `PEB.BeingDebugged`, `NtGlobalFlag`.
-- `DeepExploreObserver` provides the call stack at each detection event.
-- **Force L2** so that PEB/TEB field values are accurate and all pattern checks trigger.
-- **Forensic Signal**: Determines what technique, where in execution flow, and which parent
-  function triggered the anti-analysis check.
+- `MalwarePatternSkill` monitors for `IsDebuggerPresent`, `NtQueryInformationProcess`, etc.
+- **Forensic Signal**: Determines what technique, where in execution flow, and which parent function triggered the check.
+- **Force L2** to ensure PEB/TEB field values are accurate and all detection patterns trigger.
 
 ### Pattern C: Full Behavioral Profile
 **Observers**: All three | **Level**: 1 or 2 | **Input variation**: `--follow-calls`
 
-- Run all three observers concurrently with `--follow-calls` and `--follow-depth 3`.
+- Run all three observers concurrently with `--follow-calls` and `--follow-depth 3` for a high-fidelity execution trace.
 - Vary command-line arguments using `sess.run_until_va(target_va)` for targeted branch coverage.
 - **Forensic Signal**: Multi-dimensional profile reveals adaptive behavior under different inputs.
 
@@ -201,9 +217,9 @@ from src.config import EmulatorConfig
 cfg = EmulatorConfig(
     max_instructions=500_000,
     realism_level=2,
-    crash_mode="rollback",
+    crash_recovery="rollback",
 )
-sess = EmulatorSession.from_pe("malware.exe", 0x140001000, cfg)
+sess = EmulatorSession(vw, emu, 0x140001000, cfg)
 
 # Attach all observers
 from src.skills.anti_loophole_detector import AntiLoopholeDetector

@@ -1,4 +1,4 @@
-from rich.console import Console
+
 
 MEGABYTE = 1024 * 1024
 STACK_MEM_NAME = "[stack]"

@@ -34,7 +34,14 @@ class HookManager:
     """
     def __init__(self, emu: Any):
         self.emu = emu
-        self._arch = emu.getArchName() # 'amd64' or 'i386'
+        meta = emu.getMeta('Architecture') if hasattr(emu, 'getMeta') else {}
+        # Handle case where getMeta might return bytes or other types
+        if isinstance(meta, bytes):
+            self._arch = meta.decode('utf-8', errors='ignore')
+        elif isinstance(meta, str):
+            self._arch = meta
+        else:
+            self._arch = 'unknown'  # 'amd64' or 'i386'
         self._hooks = _GLOBAL_HOOKS.copy()
 
     def register(self, name: str, fn: HookFn) -> None:

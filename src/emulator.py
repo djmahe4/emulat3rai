@@ -26,6 +26,7 @@ from .analyzer import is_safe_to_follow
 from .hooks import build_default_registry, StopEmulation
 from .observers import (
     ObserverMixin,
+    BaseObserver,
     EVT_INSTRUCTION, EVT_MEM_WRITE, EVT_EXCEPTION,
     EVT_CALL, EVT_RETURN, EVT_HOOK_FIRED,
     EVT_SESSION_START, EVT_SESSION_END,

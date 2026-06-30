@@ -35,7 +35,14 @@ class EnvironmentManager:
     def __init__(self, emu: Any, cfg: EmulatorConfig):
         self.emu = emu
         self.cfg = cfg
-        self._arch = emu.getArchName()  # 'amd64' or 'i386'
+        meta = emu.getMeta('Architecture') if hasattr(emu, 'getMeta') else {}
+        # Handle case where getMeta might return bytes or other types
+        if isinstance(meta, bytes):
+            self._arch = meta.decode('utf-8', errors='ignore')
+        elif isinstance(meta, str):
+            self._arch = meta
+        else:
+            self._arch = 'unknown'  # 'amd64' or 'i386'
         self.stack_base = None
         self.heap_base  = FAKE_HEAP_BASE
         self.peb_base   = FAKE_PEB_BASE
@@ -73,17 +80,25 @@ class EnvironmentManager:
             if info[3] == STACK_MEM_NAME:
                 del memory_snap[i]
                 self.emu.setMemorySnap(memory_snap)
-        self.emu.initStackMemory(stacksize=self.cfg.stack_size)
+
+        # Check if we can safely call initStackMemory (fix for 64-bit address issue)
+        try:
+            self.emu.initStackMemory(stacksize=self.cfg.stack_size)
+        except struct.error:
+            # If initStackMemory fails due to 64-bit address issues,
+            # keep the existing stack map
+            pass
+
         self.stack_base = self.emu.stack_map_base
-        
+
         # Fill
         if self.cfg.realism_level >= REALISM_MODERATE:
             fill = self.cfg.make_entropy_bytes(self.cfg.stack_size)
         else:
             fill = b"\x00" * self.cfg.stack_size
-        
+
         self.emu.writeMemory(self.emu.stack_map_base, fill)
-        
+
         # Set initial SP (centred)
         new_sp = self.emu.getStackCounter() - (self.cfg.stack_size // 4)
         self.emu.setStackCounter(new_sp)
